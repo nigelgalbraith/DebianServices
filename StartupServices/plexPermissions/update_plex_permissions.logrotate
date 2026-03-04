@@ -1,0 +1,12 @@
+/var/log/update_plex_permissions.log {
+    daily
+    missingok
+    rotate 7
+    compress
+    delaycompress
+    notifempty
+    create 0644 root root
+    postrotate
+        systemctl restart update_plex_permissions.service > /dev/null 2>&1 || true
+    endscript
+}

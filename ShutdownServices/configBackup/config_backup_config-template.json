@@ -1,0 +1,39 @@
+{
+  "backup_jobs": {
+    "example_service": {
+      "source_dir": "/path/to/source/config",
+      "backup_root": "/path/to/backup/location",
+      "keep": 3,
+      "archive_prefix": "config",
+      "format": "tar.gz",
+      "stop_service": "example-service",
+      "timeout_stop_sec": 30,
+      "backupFrequency": "Daily",
+      "backupGroup": "backup",
+      "backupUsers": ["backupuser"],
+      "protected_folder": {
+        "owner": "root",
+        "group": "backup",
+        "permissions": "2775"
+      }
+    },
+
+    "example_application": {
+      "source_dir": "/etc/exampleapp",
+      "backup_root": "/path/to/backup/location",
+      "keep": 3,
+      "archive_prefix": "config",
+      "format": "zip",
+      "stop_service": "",
+      "timeout_stop_sec": 0,
+      "backupFrequency": "Daily",
+      "backupGroup": "backup",
+      "backupUsers": ["backupuser"],
+      "protected_folder": {
+        "owner": "root",
+        "group": "backup",
+        "permissions": "2775"
+      }
+    }
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "plex_folder_locs": {
+    "/mnt/media/Media/Movies": {
+      "include_files": true,
+      "expand_subfolders": true,
+      "expand_exceptions": ["Subs", "Subtitles", "Extras", "Artwork"],
+      "suffixes": ["(\\([12][0-9]{3}\\)|[\\s\\-][12][0-9]{3})"],
+      "suffix_exceptions": [],
+      "char_replacements": {
+        "\\.": " ",
+        " 20([0-9]{2})$": " (20\\1)",
+        " 19([0-9]{2})$": " (19\\1)"
+      },
+      "replace_order": [
+        "\\.",
+        " 20([0-9]{2})$",
+        " 19([0-9]{2})$"
+      ],
+      "replace_exceptions": [],
+      "remove_empty_folders": true,
+      "remove_empty_exceptions": ["Subs", "Subtitles", "Extras", "Artwork"],
+      "remove_dir": "/mnt/media/Media/.removed/plex/Movies/",
+      "remove_dir_folder_name": "plexRemovedFolders-Movies",
+      "remove_dir_folder_compress": true,
+      "remove_folder_copies": 10,
+      "folder_organization": {
+        ".srt": "Subs"
+      }
+    },
+    "/mnt/media/Media/TV Series": {
+      "include_files": true,
+      "expand_subfolders": true,
+      "expand_exceptions": ["Subs", "Subtitles", "Extras", "Artwork", "re:(?i)Season \\d+"],
+      "suffixes": [
+        "^.*?\\b[sS]\\d{2}[eE]\\d{2}\\b",
+        "^(?!.*\\b[sS]\\d{2}[eE]\\d{2}\\b).*?(\\([12]\\d{3}\\)|[\\s\\-][12]\\d{3})"
+      ],
+      "suffix_exceptions": [],
+      "char_replacements": {
+        "\\.": " ",
+        "(?i)\\bs(\\d{2})e(\\d{2})\\b": "S\\1E\\2",
+        " 20([0-9]{2})$": " (20\\1)",
+        " 19([0-9]{2})$": " (19\\1)"
+      },
+      "replace_order": [
+        "\\.",
+        "(?i)\\bs(\\d{2})e(\\d{2})\\b",
+        " 20([0-9]{2})$",
+        " 19([0-9]{2})$"
+      ],
+      "replace_exceptions": [],
+      "remove_empty_folders": true,
+      "remove_empty_exceptions": ["Subs", "Subtitles", "Extras", "Artwork", "re:(?i)Season \\d+"],
+      "remove_dir": "/mnt/media/Media/.removed/plex/TV-Series/",
+      "remove_dir_folder_name": "plexRemovedFolders-TV-Series",
+      "remove_dir_folder_compress": true,
+      "remove_folder_copies": 10,
+      "folder_organization": {
+        ".srt": "Subs",
+        "S##E##": "Season #"
+      }
+    }
+  }
+}

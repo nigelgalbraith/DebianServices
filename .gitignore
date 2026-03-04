@@ -1,0 +1,37 @@
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Editor folders
+.vscode/
+.idea/
+
+# Backup folders that scripts may generate
+Backup/
+snapshots/
+
+# Compressed archives
+*.zip
+*.tar
+*.tar.gz
+*.tgz

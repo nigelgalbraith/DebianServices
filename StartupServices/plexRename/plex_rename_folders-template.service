@@ -1,0 +1,25 @@
+# /etc/systemd/system/plex_rename_folders.service
+[Unit]
+Description=Rename/organize media folders if needed
+Wants=network-online.target
+After=network-online.target mount_drives.service
+Requires=mount_drives.service
+
+# Ensure the paths we operate on are mounted/available
+RequiresMountsFor=/mnt/media/Media
+RequiresMountsFor=/mnt/media/Media/Movies
+RequiresMountsFor=/mnt/media/Media/TV\x20Series
+ConditionPathIsMountPoint=/mnt/media/Media
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/bin/plex_rename_folders.py
+StandardOutput=append:/var/log/plex_rename_folders.log
+StandardError=append:/var/log/plex_rename_folders.log
+RemainAfterExit=true
+User=root
+Group=root
+Environment="PYTHONUNBUFFERED=1" "LANG=C.UTF-8" "LC_ALL=C.UTF-8"
+
+[Install]
+WantedBy=multi-user.target

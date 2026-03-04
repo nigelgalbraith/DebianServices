@@ -1,0 +1,47 @@
+{
+  "PLEX_SERVICE": "mediauser",
+  "GLOBAL_GROUP": "plex",
+  "GLOBAL_USERS": ["mediauser", "exampleuser"],
+
+  "MEDIA_FOLDERS": [
+    {
+      "path": "/mnt/media/Media/Movies",
+      "owner": "plex",
+      "group": "plex",
+      "permissions": "3775"
+    },
+    {
+      "path": "/mnt/media/Media/TV Series",
+      "owner": "plex",
+      "group": "plex",
+      "permissions": "3775"
+    }
+  ],
+
+  "PROTECTED_ROOT_FOLDERS": [
+    {
+      "path": "/mnt/media/Media/Movies",
+      "owner": "root",
+      "group": "plex",
+      "permissions": "3775"
+    },
+    {
+      "path": "/mnt/media/Media/TV Series",
+      "owner": "root",
+      "group": "plex",
+      "permissions": "3775"
+    },
+    {
+      "path": "/mnt/media/Media/Backup",
+      "owner": "root",
+      "group": "backup",
+      "permissions": "2755"
+    },
+    {
+      "path": "/mnt/media/Media",
+      "owner": "root",
+      "group": "root",
+      "permissions": "755"
+    }
+  ]
+}

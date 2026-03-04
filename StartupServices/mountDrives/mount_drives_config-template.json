@@ -1,0 +1,15 @@
+{
+  "MOUNT_OPTS": "defaults",
+  "DRIVES": {
+    "MEDIA_DRIVE_LABEL": "/mnt/media/Media"
+  },
+  "TRASH_USERS": ["user1", "user2"],
+  "PROTECTED_ROOT_FOLDERS": [
+    {
+      "path": "/mnt/media/Media",
+      "owner": "root",
+      "group": "root",
+      "permissions": "755"
+    }
+  ]
+}

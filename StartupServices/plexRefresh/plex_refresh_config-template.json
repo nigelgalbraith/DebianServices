@@ -1,0 +1,12 @@
+{
+  "PLEX_SERVER": {
+    "base_url": "http://127.0.0.1:32400"
+  },
+  "force": true,
+  "sleep_between_calls": 0.4,
+  "sections": [
+    { "title": "Movies" },
+    { "title": "TV Shows" },
+    { "title": "Music" }
+  ]
+}

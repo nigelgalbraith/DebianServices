@@ -1,0 +1,22 @@
+[Unit]
+Description=Config backup (poweroff only)
+DefaultDependencies=no
+RequiresMountsFor=/mnt/backup/Backups
+After=local-fs.target mount_drives.service
+# If you don't have mount_drives.service, remove it from the After= line above.
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/bin/python3 -u /usr/local/bin/config_backup.py
+User=root
+Group=root
+Environment="PYTHONUNBUFFERED=1" "LANG=C.UTF-8" "LC_ALL=C.UTF-8"
+StandardOutput=append:/var/log/config_backup.log
+StandardError=append:/var/log/config_backup.log
+TimeoutStopSec=30min
+
+[Install]
+WantedBy=multi-user.target

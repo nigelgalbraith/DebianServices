@@ -1,0 +1,12 @@
+/var/log/plex_rename_folders.log {
+    daily
+    missingok
+    rotate 7
+    compress
+    delaycompress
+    notifempty
+    create 0644 root root
+    postrotate
+        systemctl restart plex_rename_folders.service > /dev/null 2>&1 || true
+    endscript
+}

@@ -1,0 +1,9 @@
+/var/log/config_backup.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

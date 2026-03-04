@@ -1,0 +1,30 @@
+[Unit]
+Description=Update media permissions
+Wants=network-online.target
+After=network-online.target mount_drives.service plex_rename_folders.service
+Requires=mount_drives.service plex_rename_folders.service
+
+# Ensure all media directories are mounted before running
+RequiresMountsFor=/mnt/media/Media
+RequiresMountsFor=/mnt/media/Media/Backup
+RequiresMountsFor=/mnt/media/Media/Movies
+RequiresMountsFor=/mnt/media/Media/Music
+RequiresMountsFor=/mnt/media/Media/Other\x20Videos
+RequiresMountsFor=/mnt/media/Media/Photos
+RequiresMountsFor=/mnt/media/Media/TV\x20Series
+
+# Only run if the main mount point exists
+ConditionPathIsMountPoint=/mnt/media/Media
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/bin/update_plex_permissions.py
+StandardOutput=append:/var/log/update_plex_permissions.log
+StandardError=append:/var/log/update_plex_permissions.log
+RemainAfterExit=true
+User=root
+Group=root
+Environment="PYTHONUNBUFFERED=1" "LANG=C.UTF-8" "LC_ALL=C.UTF-8"
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+{
+  "backup_jobs": {
+    "example_backup": {
+      "source_dir": "/path/to/source",
+      "backup_root": "/path/to/backup/location",
+      "keep": 3,
+      "snapshot_prefix": "snapshot",
+      "backupFrequency": "Daily",
+      "backupGroup": "backup",
+      "backupUsers": ["backupuser"],
+      "exclude": [
+        ".cache/",
+        "Downloads/",
+        ".local/share/Trash/"
+      ],
+      "protected_folder": {
+        "owner": "root",
+        "group": "backup",
+        "permissions": "2775"
+      }
+    }
+  }
+}
