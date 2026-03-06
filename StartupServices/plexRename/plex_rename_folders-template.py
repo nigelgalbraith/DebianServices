@@ -282,32 +282,37 @@ def filter_jobs(jobs, *, skip_same: bool = True, skip_if_target_exists: bool = T
     return pairs
 
 
-def display_summary_table(pairs, title: str, label_old: str, label_new: str, *, basename: bool = False) -> None:
+def display_summary_table(
+    pairs,
+    title: str,
+    label_old: str,
+    label_new: str,
+    *,
+    prefix: str = "",
+    basename: bool = False
+) -> None:
     """
     Print a vertical summary table for a list of rename jobs.
 
     Args:
         pairs: Iterable of (old_path, new_path) pairs.
         title: Section title.
-        label_old: Label to show before the old value (e.g., "Old Name").
-        label_new: Label to show before the new value (e.g., "New Name").
-        basename: If True, show only the final component (name) instead of full path.
-
-    Example:
-        >>> display_summary_table([('/a/Old','/a/New')], "Folder Character Replacements", "Old", "New")
-        # prints a table
+        label_old: Label to show before the old value.
+        label_new: Label to show before the new value.
+        prefix: Optional text prefix for each log line (for example "[DRY-RUN] ").
+        basename: If True, show only the final path component instead of full path.
     """
     pairs_list = list(pairs)
     if not pairs_list:
         return
-    log_message("") 
-    log_message(title)
-    log_message("-" * len(title))
+    log_message("")
+    log_message(f"{prefix}{title}")
+    log_message(f"{prefix}{'-' * len(title)}")
     for old, new in pairs_list:
         o = Path(old).name if basename else old
         n = Path(new).name if basename else new
-        log_message(f"{label_old}: {o}")
-        log_message(f"{label_new}: {n}\n")
+        log_message(f"{prefix}{label_old}: {o}")
+        log_message(f"{prefix}{label_new}: {n}\n")
 
 
 # =====================
@@ -867,6 +872,8 @@ def main():
         )
         log_message(f"Using config: {active_config}")
         log_message(f"Dry run: {dry_run}\n")
+    # set prefix value
+    prefix = "[DRY-RUN] " if dry_run else ""
     try:
         cfg = load_config(active_config)
     except Exception as e:
@@ -905,35 +912,36 @@ def main():
         # Track if THIS location produced any effective jobs, so we can
         # log_message exactly one "No changes" line per location.
         any_changes_loc = False
+        
         # ----- EXPAND SUBFOLDERS  -----
         expand_subfolders  = bool(opts.get(KEY_EXPAND_SUBFOLDERS, False))
         expand_exceptions  = opts.get(KEY_EXPAND_EXCEPTIONS, [])
         if expand_subfolders:
-            log_message(f"Expanding subfolders into '{loc}'...")
+            log_message(f"{prefix}Expanding subfolders into '{loc}'...")
             expand_jobs = list(create_expand_subfolders_jobs(loc, *expand_exceptions))
             real_expand_jobs = filter_jobs(expand_jobs)
             total_expanded_files += len(real_expand_jobs)
             if real_expand_jobs:
                 any_changes_loc = True
                 # Show only basenames to keep it readable
-                display_summary_table(real_expand_jobs, TITLE_EXPAND_SUBFOLDERS, COL_OLD, COL_NEW, basename=False)
+                display_summary_table(real_expand_jobs, TITLE_EXPAND_SUBFOLDERS, COL_OLD, COL_NEW, prefix=prefix)
                 for old, new in real_expand_jobs:
                     rename_folder(old, new, dry_run)
             else:
-                log_message(f"No files to move up for location: {loc}\n")
+                log_message(f"{prefix}No files to move up for location: {loc}\n")
         # ----- CHAR REPLACEMENTS (ordered) -----
         for from_pat in loc_replace_order:
             to_repl = loc_char_replacements.get(from_pat)
             if to_repl is None:
                 continue
-            log_message(f"Renaming in '{loc}' (files={str(include_files).lower()}), " f"replacing '{from_pat}' → '{to_repl}'...")
+            log_message(f"{prefix}Renaming in '{loc}' (files={str(include_files).lower()}), " f"replacing '{from_pat}' → '{to_repl}'...")
             # FOLDERS
             jobs = list(create_replace_char_jobs(loc, from_pat, to_repl, *loc_replace_exceptions))
             real_jobs = filter_jobs(jobs)
             total_folder_replacements += len(real_jobs)
             if real_jobs:
                 any_changes_loc = True
-                display_summary_table(real_jobs, TITLE_FOLDER_REPLACEMENTS, COL_OLD, COL_NEW)
+                display_summary_table(real_jobs, TITLE_FOLDER_REPLACEMENTS, COL_OLD, COL_NEW, prefix=prefix)
                 for old, new in real_jobs:
                     rename_folder(old, new, dry_run)
             # FILES
@@ -947,19 +955,19 @@ def main():
                             total_file_replacements += len(real_file_jobs)
                             if real_file_jobs:
                                 any_changes_loc = True
-                                display_summary_table(real_file_jobs, TITLE_FILE_REPLACEMENTS, COL_OLD, COL_NEW)
+                                display_summary_table(real_file_jobs, TITLE_FILE_REPLACEMENTS, COL_OLD, COL_NEW, prefix=prefix)
                                 for old, new in real_file_jobs:
                                     rename_folder(old, new, dry_run)
         # ----- SUFFIX TRIM -----
         for suffix in loc_suffixes:
-            log_message(f"Trimming suffix '{suffix}' in '{loc}' (files={str(include_files).lower()})...")
+            log_message(f"{prefix}Trimming suffix '{suffix}' in '{loc}' (files={str(include_files).lower()})...")
             # FOLDERS
             jobs = list(create_suffix_jobs(loc, suffix, *loc_suffix_exceptions))
             real_jobs = filter_jobs(jobs)
             total_folder_suffixes += len(real_jobs)
             if real_jobs:
                 any_changes_loc = True
-                display_summary_table(real_jobs, TITLE_FOLDER_SUFFIX_REMOVAL, COL_OLD, COL_NEW)
+                display_summary_table(real_jobs, TITLE_FOLDER_SUFFIX_REMOVAL, COL_OLD, COL_NEW, prefix=prefix)
                 for old, new in real_jobs:
                     rename_folder(old, new, dry_run)
             # FILES
@@ -973,7 +981,7 @@ def main():
                             total_file_suffixes += len(real_file_jobs)
                             if real_file_jobs:
                                 any_changes_loc = True
-                                display_summary_table(real_file_jobs, TITLE_FILE_SUFFIX_REMOVAL, COL_OLD, COL_NEW)
+                                display_summary_table(real_file_jobs, TITLE_FILE_SUFFIX_REMOVAL, COL_OLD, COL_NEW, prefix=prefix)
                                 for old, new in real_file_jobs:
                                     rename_folder(old, new, dry_run)
         # ----- FOLDER ORGANIZATION (per container) -----
@@ -989,7 +997,7 @@ def main():
                 total_file_org += len(real_org_jobs)
                 if real_org_jobs:
                     any_changes_loc = True
-                    display_summary_table(real_org_jobs, TITLE_ORGANIZE, COL_OLD, COL_NEW, basename=False)
+                    display_summary_table(real_org_jobs, TITLE_ORGANIZE, COL_OLD, COL_NEW, prefix=prefix)
                     for old, new in real_org_jobs:
                         if rename_folder(old, new, dry_run):
                             # you can track a separate counter if you want
@@ -1000,7 +1008,7 @@ def main():
             if planned:
                 any_changes_loc = True
                 # Show only a simple count (no per-folder listing)
-                log_message(f"Empty folders to remove: {len(planned)}")
+                log_message(f"{prefix}Empty folders to remove: {len(planned)}")
                 for p in planned:
                     if remove_folders_move(p, remove_dir, remove_subfolder, dry_run):
                         total_removed_folders += 1
@@ -1013,14 +1021,14 @@ def main():
                                 remove_dir, remove_subfolder, remove_folder_copies, loc, dry_run
                             )
                         total_bucket_zips += 1
-                        log_message(f"NOTE: Removed folders will be compressed into: {zip_path}")
+                        log_message(f"{prefix}NOTE: Removed folders will be compressed into: {zip_path}")
                 else:
                     if remove_folder_copies > 0:
                         total_old_removed_dirs_deleted += cleanup_old_removed_bucket_dirs(
                             remove_dir, remove_subfolder, remove_folder_copies, loc, dry_run
                         )
         if not any_changes_loc:
-            log_message(f"No changes required for location: {loc}")
+            log_message(f"{prefix}No changes required for location: {loc}")
     # --- summary ---
     max_len = max(
         len(TITLE_FOLDER_REPLACEMENTS),
@@ -1033,17 +1041,17 @@ def main():
         len(TITLE_REMOVE_OLD_ZIPS),
         len(TITLE_REMOVE_OLD_DIRS),
     )
-    log_message("\nSummary Totals")
-    log_message("==============")
-    log_message(f"{TITLE_FOLDER_REPLACEMENTS.ljust(max_len)} : {total_folder_replacements}")
-    log_message(f"{TITLE_FILE_REPLACEMENTS.ljust(max_len)} : {total_file_replacements}")
-    log_message(f"{TITLE_FOLDER_SUFFIX_REMOVAL.ljust(max_len)} : {total_folder_suffixes}")
-    log_message(f"{TITLE_FILE_SUFFIX_REMOVAL.ljust(max_len)} : {total_file_suffixes}")
-    log_message(f"{TITLE_EXPAND_SUBFOLDERS.ljust(max_len)} : {total_expanded_files}")
-    log_message(f"{TITLE_ORGANIZE.ljust(max_len)} : {total_file_org}")
-    log_message(f"{TITLE_REMOVE_EMPTY.ljust(max_len)} : {total_removed_folders}")
-    log_message(f"{TITLE_REMOVE_OLD_ZIPS.ljust(max_len)} : {total_old_removed_zips_deleted}")
-    log_message(f"{TITLE_REMOVE_OLD_DIRS.ljust(max_len)} : {total_old_removed_dirs_deleted}")
+    log_message(f"\n{prefix}Summary Totals")
+    log_message(f"{prefix}==============")
+    log_message(f"{prefix}{TITLE_FOLDER_REPLACEMENTS.ljust(max_len)} : {total_folder_replacements}")
+    log_message(f"{prefix}{TITLE_FILE_REPLACEMENTS.ljust(max_len)} : {total_file_replacements}")
+    log_message(f"{prefix}{TITLE_FOLDER_SUFFIX_REMOVAL.ljust(max_len)} : {total_folder_suffixes}")
+    log_message(f"{prefix}{TITLE_FILE_SUFFIX_REMOVAL.ljust(max_len)} : {total_file_suffixes}")
+    log_message(f"{prefix}{TITLE_EXPAND_SUBFOLDERS.ljust(max_len)} : {total_expanded_files}")
+    log_message(f"{prefix}{TITLE_ORGANIZE.ljust(max_len)} : {total_file_org}")
+    log_message(f"{prefix}{TITLE_REMOVE_EMPTY.ljust(max_len)} : {total_removed_folders}")
+    log_message(f"{prefix}{TITLE_REMOVE_OLD_ZIPS.ljust(max_len)} : {total_old_removed_zips_deleted}")
+    log_message(f"{prefix}{TITLE_REMOVE_OLD_DIRS.ljust(max_len)} : {total_old_removed_dirs_deleted}")
     return 0
 
 # Run the program
