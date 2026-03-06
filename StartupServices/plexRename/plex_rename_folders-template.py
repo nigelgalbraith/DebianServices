@@ -2,61 +2,160 @@
 """
 Plex Rename Utility (Python port)
 
-This script normalizes Plex media folder and file names based on a JSON config.
+Normalize and organize Plex media folders and files using a JSON configuration.
+The script can rename container folders, rename files within containers, move
+files out of immediate subfolders, organize files into subdirectories based on
+rules, and move empty folders into a dated removal bucket.
 
-Behavior:
-- If the script filename is exactly `plex_rename_folders.py`, it uses the
-  production config at `/etc/plex_rename_folders_config.json` and performs
-  real renames (dry_run = False).
-- If the script is run under any other name, it uses the local template
-  `plex_rename_folders_config-template.json` (resolved relative to the script)
-  and only logs what would happen (dry_run = True).
+This script is designed to be safe for both production use and testing. It
+supports an explicit dry-run argument and also falls back to dry-run mode when
+the script is not run under its production filename.
 
-Usage:
-    $ ./plex_rename_folders.py
-        → Live mode, uses /etc config, performs renames.
+Behavior
+--------
+The script decides its execution mode using two safety checks:
 
-    $ cp plex_rename_folders.py plex_rename_folders_test.py
-    $ ./plex_rename_folders_test.py
-        → Dry-run mode, uses local template config next to the script.
+1. --dry-run argument
+   Passing --dry-run always forces dry-run mode and uses the local template
+   config next to the script.
 
-Config keys (JSON):
-    - plex_folder_locs: {
-        "<root_path>": {
-          "include_files": bool,                    # also rename files inside each container
-          "expand_subfolders": bool,                # move files up one level (container/<sub>/file -> container/file)
-          "expand_exceptions": [name|re:<regex>, ...],  # skip subfolders by exact name or regex (fullmatch)
-          "suffixes": [regex, ...],                 # trim folder/file base names to the first match group
-          "suffix_exceptions": [name, ...],         # exact names to skip when trimming
-          "char_replacements": { "regex": "replacement", ... },   # applied in replace_order
-          "replace_order": [ "regex", ... ],
-          "replace_exceptions": [name, ...],        # exact names to skip for replacements
-          "folder_organization": {                  # file moves within a container (non-recursive)
-              # keys: ".ext" (by extension), "S##E##" macro, or custom regex
-              # values: destination template (may include '/', '{1}', '{2}', '{name}', '{stem}', '{ext}', and '#')
-          },
-          "remove_empty_folders": bool,             # compute all empty dirs and move them to trash in one pass
-          "remove_folder_copies": int,              # keep last N removed buckets (zip or folder, depending on compress); 0 = unlimited
-          "remove_empty_exceptions": [name|re:<regex>, ...],  # skip by exact or regex
-          "remove_dir": "/path/to/trash"             # optional; defaults to <folder>/.trash
-        }, ...
-      }
+2. Script filename check
+   If the script filename is exactly:
+       plex_rename_folders.py
+   it runs in live mode and uses:
+       /etc/plex_rename_folders_config.json
+
+   If run under any other filename, it automatically switches to dry-run mode
+   and uses:
+       plex_rename_folders_config-template.json
+   resolved relative to the script location.
+
+Dry-run mode logs all planned changes without modifying the filesystem.
+
+Usage
+-----
+
+Production execution:
+    ./plex_rename_folders.py
+
+Explicit dry-run:
+    ./plex_rename_folders.py --dry-run
+
+Testing by alternate filename:
+    cp plex_rename_folders.py plex_rename_folders_test.py
+    ./plex_rename_folders_test.py
+
+Example results:
+    plex_rename_folders.py
+        → Live mode, uses /etc config, performs changes
+
+    plex_rename_folders.py --dry-run
+        → Dry-run mode, uses local template config, performs no changes
+
+    plex_rename_folders_test.py
+        → Dry-run mode, uses local template config, performs no changes
+
+Configuration
+-------------
+Production config:
+    /etc/plex_rename_folders_config.json
+
+Dry-run / template config:
+    plex_rename_folders_config-template.json
+
+Main config key:
+    plex_folder_locs
+
+Example structure:
+
+{
+    "plex_folder_locs": {
+        "/mnt/media/tv": {
+            "include_files": true,
+            "expand_subfolders": true,
+            "expand_exceptions": ["Extras", "re:(?i)Season 0"],
+            "suffixes": ["S\\d{2}E\\d{2}"],
+            "suffix_exceptions": ["sample"],
+            "char_replacements": {
+                "\\.": " ",
+                "_": " "
+            },
+            "replace_order": ["\\.", "_"],
+            "replace_exceptions": ["sample"],
+            "folder_organization": {
+                ".srt": "Subs",
+                "S##E##": "Season #"
+            },
+            "remove_empty_folders": true,
+            "remove_empty_exceptions": ["Subs"],
+            "remove_dir": "/mnt/media/.trash",
+            "remove_dir_folder_name": "removed",
+            "remove_dir_folder_compress": true,
+            "remove_folder_copies": 5
+        }
+    }
+}
+
+Supported Operations
+--------------------
+Per configured root folder, the script can:
+
+• Expand subfolders
+  Move files from immediate child subfolders up into the container folder.
+
+• Character replacements
+  Rename folders and optional files using regex-based replacement rules.
+
+• Suffix trimming
+  Trim folder and file names to the part matched by a configured regex.
+
+• Folder organization
+  Move files inside each container into subfolders based on extension,
+  macro patterns, or custom regex rules.
+
+• Empty folder cleanup
+  Detect empty folders after processing and move them into a dated trash bucket.
+
+• Removed bucket retention
+  Optionally compress removed buckets and delete older buckets or zips beyond
+  a configured keep limit.
+
+Operation Overview
+------------------
+1. Determine live mode or dry-run mode
+2. Load JSON configuration
+3. Process each configured root folder independently
+4. Expand subfolders if enabled
+5. Apply folder and file rename rules
+6. Organize files into subdirectories if configured
+7. Move empty folders into a removal bucket if enabled
+8. Optionally compress removed buckets and clean up old copies
+9. Print summary totals
+
+Logging
+-------
+All activity is logged to stdout with timestamps. In dry-run mode, planned
+actions are shown with DRY-RUN messages. In live mode, actual rename and move
+results are logged.
 """
 
 import json
 import re
 import shutil 
 import sys
+import os
+import argparse
 from datetime import datetime
 from pathlib import Path
 from functools import lru_cache
 
-# =======================
-# Constants
-# =======================
+# =====================
+# CONSTANTS
+# =====================
 CONFIG_FILE_TEST = "plex_rename_folders_config-template.json"
 CONFIG_FILE = "/etc/plex_rename_folders_config.json"
 SCRIPT_NAME = "plex_rename_folders.py"
+ARG_DESCRIPTION = "Normalize Plex media folder and file names based on config."
 
 # JSON keys as constants
 KEY_PLEX_FOLDER_LOCS            = "plex_folder_locs"
@@ -84,18 +183,30 @@ TITLE_FILE_SUFFIX_REMOVAL       = "File Suffix Removal"
 TITLE_EXPAND_SUBFOLDERS         = "Move Files Up (Expand Subfolders)"
 TITLE_ORGANIZE                  = "Folder Organization (file moves)"
 TITLE_REMOVE_EMPTY              = "Empty Folders → Trash"
-TITLE_COMPRESS_REMOVED          = "Compressed Removed Buckets"
 TITLE_REMOVE_OLD_ZIPS           = "Old Removed Zips Deleted"
 TITLE_REMOVE_OLD_DIRS           = "Old Removed Buckets Deleted"
 COL_OLD                         = "Old Name"
 COL_NEW                         = "New Name"
 
-# =======================
-# Helpers
-# =======================
+# =====================
+# HELPERS
+# =====================
 @lru_cache(maxsize=None)
 def _rx(pat: str) -> re.Pattern:
     return re.compile(pat)
+
+
+def parse_args(description: str):
+    parser = argparse.ArgumentParser(
+        description=description
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show actions without executing"
+    )
+    return parser.parse_args()
+
 
 def log_message(message: str) -> None:
     """
@@ -148,6 +259,7 @@ def load_config(config_path: str) -> dict:
     with p.open("r", encoding="utf-8") as f:
         return json.load(f)
 
+
 def filter_jobs(jobs, *, skip_same: bool = True, skip_if_target_exists: bool = True) -> list[tuple[str, str]]:
     """
     Normalize and filter rename/move jobs.
@@ -169,6 +281,7 @@ def filter_jobs(jobs, *, skip_same: bool = True, skip_if_target_exists: bool = T
         pairs.append((old, new))
     return pairs
 
+
 def display_summary_table(pairs, title: str, label_old: str, label_new: str, *, basename: bool = False) -> None:
     """
     Print a vertical summary table for a list of rename jobs.
@@ -187,51 +300,19 @@ def display_summary_table(pairs, title: str, label_old: str, label_new: str, *, 
     pairs_list = list(pairs)
     if not pairs_list:
         return
-
     log_message("") 
     log_message(title)
     log_message("-" * len(title))
-
     for old, new in pairs_list:
         o = Path(old).name if basename else old
         n = Path(new).name if basename else new
         log_message(f"{label_old}: {o}")
         log_message(f"{label_new}: {n}\n")
-        
-        
-def get_config_and_mode(script_name: str, expected_name: str, prod_config: str, test_config: str) -> tuple[str, bool]:
-    """
-    Determine active config path and dry-run mode from the script filename.
 
-    If the current script name matches `expected_name`, use the production
-    config and perform real renames. Otherwise, use the local template config
-    (resolved relative to this file) and run in dry-run mode.
 
-    Args:
-        script_name: The name of the executing script (e.g., Path(__file__).name).
-        expected_name: The production script name to match.
-        prod_config: Absolute path to the production config.
-        test_config: Relative path to the template config (next to this script).
-
-    Returns:
-        tuple[str, bool]: (active_config_path, dry_run)
-    """
-    if script_name == expected_name:
-        active_config = prod_config
-        dry_run = False
-    else:
-        # Resolve the template config relative to this script file so it works
-        # regardless of the current working directory.
-        active_config = str(Path(__file__).resolve().parent / test_config)
-        dry_run = True
-
-    log_message(f"Using config: {active_config}")
-    log_message(f"Dry run: {dry_run}\n")
-    return active_config, dry_run
-
-# =======================
+# =====================
 # CREATE JOBS (DIRECTORIES)
-# =======================
+# =====================
 def create_expand_subfolders_jobs(folder_loc: str, *exceptions: str):
     """
     Move files from each container's immediate subfolders up into the container.
@@ -249,13 +330,11 @@ def create_expand_subfolders_jobs(folder_loc: str, *exceptions: str):
     root = Path(folder_loc)
     if not root.exists():
         return
-
     for container in root.iterdir():
         if not container.is_dir():
             continue
         if container.name.startswith("."):
             continue
-
         # Move files from each immediate subfolder into the container itself
         for sub in container.iterdir():
             if not sub.is_dir():
@@ -264,7 +343,6 @@ def create_expand_subfolders_jobs(folder_loc: str, *exceptions: str):
                 continue
             if is_in_exceptions(sub.name, *exceptions):
                 continue
-
             for f in sub.iterdir():
                 if not f.is_file():
                     continue
@@ -310,6 +388,7 @@ def create_replace_char_jobs(folder_loc: str, pattern: str, replacement: str, *e
                 continue
             yield (str(entry), str(entry.parent / new_name))
 
+
 def create_suffix_jobs(folder_loc: str, suffix: str, *exceptions: str):
     """
     Yield rename jobs for FOLDER suffix trimming at one directory depth.
@@ -342,9 +421,9 @@ def create_suffix_jobs(folder_loc: str, suffix: str, *exceptions: str):
             yield (str(entry), str(entry.parent / new_name))
 
 
-# ============================
+# =====================
 # CREATE JOBS (FILES IN FOLDERS)
-# ============================
+# =====================
 def create_replace_char_file_jobs(folder_loc: str, pattern: str, replacement: str, *exceptions: str):
     """
     Yield rename jobs for FILE character replacements (only immediate files).
@@ -382,6 +461,7 @@ def create_replace_char_file_jobs(folder_loc: str, pattern: str, replacement: st
             if new_name + ext == base_file:
                 continue
             yield (str(entry), str(entry.with_name(new_name + ext)))
+
 
 def create_suffix_file_jobs(folder_loc: str, suffix: str, *exceptions: str):
     """
@@ -433,9 +513,7 @@ def create_delete_empty_dir_jobs(folder_loc: str, *exceptions: str):
         return []
     dirs = [p for p in root.rglob("*") if p.is_dir()]
     dirs.sort(key=lambda p: len(p.parts), reverse=True)
-
     to_trash = set()
-
     for d in dirs:
         if d.name.startswith(".") or is_in_exceptions(d.name, *exceptions):
             continue
@@ -443,11 +521,9 @@ def create_delete_empty_dir_jobs(folder_loc: str, *exceptions: str):
             entries = list(d.iterdir())
         except Exception:
             continue
-
         # If there are files, it won't be empty.
         if any(e.is_file() for e in entries):
             continue
-
         subdirs = [e for e in entries if e.is_dir()]
         if not subdirs:
             # already empty
@@ -456,13 +532,12 @@ def create_delete_empty_dir_jobs(folder_loc: str, *exceptions: str):
             # Becomes empty iff all subdirs are slated for trash
             if all(sd in to_trash for sd in subdirs):
                 to_trash.add(d)
-
     return [str(p) for p in sorted(to_trash, key=lambda p: len(p.parts), reverse=True)]
 
 
-# =======================
+# =====================
 # RENAME HANDLER
-# =======================
+# =====================
 def rename_folder(old_path: str, new_path: str, dry_run: bool) -> bool:
     """
     Move/rename a path and log the outcome.
@@ -472,15 +547,12 @@ def rename_folder(old_path: str, new_path: str, dry_run: bool) -> bool:
     old_p = Path(old_path)
     new_p = Path(new_path)
     verb = "move" if old_p.parent != new_p.parent else "rename"
-
     if old_p == new_p:
         log_message(f"Skip: no-op '{old_p}'.")
         return False
-
     if dry_run:
         log_message(f"DRY-RUN: Would {verb} '{old_p}' → '{new_p}'.")
         return True
-
     if new_p.exists():
         log_message(f"Skip: target exists '{new_p}'.")
         return False
@@ -493,10 +565,9 @@ def rename_folder(old_path: str, new_path: str, dry_run: bool) -> bool:
         log_message(f"Failed to {verb} '{old_p}' → '{new_p}'. Error: {e}")
         return False
 
-# =======================
+# =====================
 # FILE ORGANISATION JOBS
-# =======================
-
+# =====================
 def _macro_to_regex(pat: str) -> re.Pattern | None:
     """
     Expand simple macros to regex. Currently supports 'S##E##' (case-insensitive),
@@ -505,6 +576,7 @@ def _macro_to_regex(pat: str) -> re.Pattern | None:
     if pat.upper() == "S##E##":
         return re.compile(r"(?i)\bS0*(\d{1,2})E0*(\d{1,2})\b")
     return None
+
 
 def _format_dest(dest_tmpl: str, m: re.Match | None, f: Path) -> str:
     """
@@ -520,7 +592,6 @@ def _format_dest(dest_tmpl: str, m: re.Match | None, f: Path) -> str:
     if "{name}" in dest: dest = dest.replace("{name}", f.name)
     if "{stem}" in dest: dest = dest.replace("{stem}", f.stem)
     if "{ext}"  in dest: dest = dest.replace("{ext}",  f.suffix)
-
     if m:
         # {1}, {2}, ...
         for i, g in enumerate(m.groups(), start=1):
@@ -529,6 +600,7 @@ def _format_dest(dest_tmpl: str, m: re.Match | None, f: Path) -> str:
         if "#" in dest and m.groups():
             dest = dest.replace("#", str(m.group(1)))
     return dest
+
 
 def compile_folder_org_rules(org_map: dict):
     """
@@ -542,7 +614,7 @@ def compile_folder_org_rules(org_map: dict):
     Produces rule objects:
       - {"kind":"ext",   "ext":".srt",          "dest":"Subs"}
       - {"kind":"regex", "regex":/S..E../i,     "dest":"Season #"}
-      - {"kind":"regex", "regex":/Part (\d+)/i, "dest":"Parts/Part {1}"}
+      - {"kind":"regex", "regex":/Part (\\d+)/i, "dest":"Parts/Part {1}"}
 
     Destination templates support:
       - {1}, {2}, ... : regex capture groups
@@ -554,11 +626,9 @@ def compile_folder_org_rules(org_map: dict):
         if not isinstance(raw_pat, str) or not isinstance(dest, str):
             log_message(f"Skip invalid folder_organization entry: {raw_pat!r} -> {dest!r}")
             continue
-
         if raw_pat.startswith("."):
             rules.append({"kind": "ext", "ext": raw_pat.lower(), "dest": dest})
             continue
-
         # Macro?
         rx = _macro_to_regex(raw_pat)
         if rx is None:
@@ -571,6 +641,7 @@ def compile_folder_org_rules(org_map: dict):
         rules.append({"kind": "regex", "regex": rx, "dest": dest})
     return rules
 
+
 def create_folder_org_jobs(container_dir: str, rules) -> list[tuple[str, str]]:
     """
     For a single container (show/movie folder), plan moves for immediate files only
@@ -581,7 +652,6 @@ def create_folder_org_jobs(container_dir: str, rules) -> list[tuple[str, str]]:
     c = Path(container_dir)
     if not c.exists() or not c.is_dir():
         return jobs
-
     for f in c.iterdir():
         if not f.is_file():
             continue
@@ -604,9 +674,9 @@ def create_folder_org_jobs(container_dir: str, rules) -> list[tuple[str, str]]:
     return jobs
 
 
-# =======================
+# =====================
 # DELETE HANDLER
-# =======================
+# =====================
 def remove_folders_move(path: str, remove_dir: str | None, remove_dir_folder_name: str | None, dry_run: bool) -> bool:
     """Move an empty folder into a dated bucket under remove_dir (or .trash)."""
     src = Path(path)
@@ -715,7 +785,6 @@ def cleanup_old_removed_buckets(remove_dir: str | None, remove_dir_folder_name: 
             deleted += 1
         except Exception as e:
             log_message(f"Failed to delete '{z}'. Error: {e}")
-
     return deleted
 
 
@@ -750,9 +819,9 @@ def cleanup_old_removed_bucket_dirs(remove_dir: str | None, remove_dir_folder_na
     return deleted
 
 
-# =======================
+# =====================
 # MAIN WORKFLOW
-# =======================
+# =====================
 def main():
     """
     Entry point. Loads config and runs all rename passes per configured root.
@@ -772,22 +841,42 @@ def main():
     Returns:
         int: process exit code (0 on success).
     """
-    # Choose config run mode based on script name
-    script_name = Path(__file__).name
-    active_config, dry_run = get_config_and_mode(script_name, SCRIPT_NAME, CONFIG_FILE, CONFIG_FILE_TEST)
-
+    # Decide config + dry-run based on script filename or arguments
+    args = parse_args(ARG_DESCRIPTION)
+    script_basename = os.path.basename(sys.argv[0])
+    if args.dry_run:
+        active_config = str(Path(__file__).resolve().parent / CONFIG_FILE_TEST)
+        dry_run = True
+        log_message(
+            f"Argument '--dry-run' detected — "
+            f"running in DRY-RUN with test config '{active_config}'."
+        )
+        log_message(f"Using config: {active_config}")
+        log_message(f"Dry run: {dry_run}\n")
+    elif script_basename == SCRIPT_NAME:
+        active_config = CONFIG_FILE
+        dry_run = False
+        log_message(f"Using config: {active_config}")
+        log_message(f"Dry run: {dry_run}\n")
+    else:
+        active_config = str(Path(__file__).resolve().parent / CONFIG_FILE_TEST)
+        dry_run = True
+        log_message(
+            f"Script name '{script_basename}' != '{SCRIPT_NAME}' — "
+            f"running in DRY-RUN with test config '{active_config}'."
+        )
+        log_message(f"Using config: {active_config}")
+        log_message(f"Dry run: {dry_run}\n")
     try:
         cfg = load_config(active_config)
     except Exception as e:
         log_message(f"Failed to load config: {e}")
         return 1
-
     # Get the folder locations from the config
     plex_folder_locs = cfg.get(KEY_PLEX_FOLDER_LOCS, {})
     if not isinstance(plex_folder_locs, dict) or not plex_folder_locs:
         log_message("No locations found in config (key: 'plex_folder_locs'). Nothing to do.")
         return 0
-
     # --- totals ---
     total_folder_replacements       = 0
     total_file_replacements         = 0
@@ -799,8 +888,6 @@ def main():
     total_bucket_zips               = 0
     total_old_removed_zips_deleted  = 0
     total_old_removed_dirs_deleted  = 0
-
-
     # Process each configured root independently
     for loc, opts in plex_folder_locs.items():
         include_files           = bool(opts.get(KEY_INCLUDE_FILES, False))
@@ -815,15 +902,12 @@ def main():
         remove_subfolder        = opts.get(KEY_REMOVE_DIR_FOLDER_NAME)
         remove_compress         = bool(opts.get(KEY_REMOVE_DIR_FOLDER_COMPRESS, False))
         remove_folder_copies    = int(opts.get(KEY_REMOVE_FOLDER_COPIES, 0))
-        
         # Track if THIS location produced any effective jobs, so we can
         # log_message exactly one "No changes" line per location.
         any_changes_loc = False
-
         # ----- EXPAND SUBFOLDERS  -----
         expand_subfolders  = bool(opts.get(KEY_EXPAND_SUBFOLDERS, False))
         expand_exceptions  = opts.get(KEY_EXPAND_EXCEPTIONS, [])
-
         if expand_subfolders:
             log_message(f"Expanding subfolders into '{loc}'...")
             expand_jobs = list(create_expand_subfolders_jobs(loc, *expand_exceptions))
@@ -837,14 +921,12 @@ def main():
                     rename_folder(old, new, dry_run)
             else:
                 log_message(f"No files to move up for location: {loc}\n")
-
         # ----- CHAR REPLACEMENTS (ordered) -----
         for from_pat in loc_replace_order:
             to_repl = loc_char_replacements.get(from_pat)
             if to_repl is None:
                 continue
             log_message(f"Renaming in '{loc}' (files={str(include_files).lower()}), " f"replacing '{from_pat}' → '{to_repl}'...")
-
             # FOLDERS
             jobs = list(create_replace_char_jobs(loc, from_pat, to_repl, *loc_replace_exceptions))
             real_jobs = filter_jobs(jobs)
@@ -854,7 +936,6 @@ def main():
                 display_summary_table(real_jobs, TITLE_FOLDER_REPLACEMENTS, COL_OLD, COL_NEW)
                 for old, new in real_jobs:
                     rename_folder(old, new, dry_run)
-
             # FILES
             if include_files:
                 root = Path(loc)
@@ -869,11 +950,9 @@ def main():
                                 display_summary_table(real_file_jobs, TITLE_FILE_REPLACEMENTS, COL_OLD, COL_NEW)
                                 for old, new in real_file_jobs:
                                     rename_folder(old, new, dry_run)
-
         # ----- SUFFIX TRIM -----
         for suffix in loc_suffixes:
             log_message(f"Trimming suffix '{suffix}' in '{loc}' (files={str(include_files).lower()})...")
-
             # FOLDERS
             jobs = list(create_suffix_jobs(loc, suffix, *loc_suffix_exceptions))
             real_jobs = filter_jobs(jobs)
@@ -883,7 +962,6 @@ def main():
                 display_summary_table(real_jobs, TITLE_FOLDER_SUFFIX_REMOVAL, COL_OLD, COL_NEW)
                 for old, new in real_jobs:
                     rename_folder(old, new, dry_run)
-
             # FILES
             if include_files:
                 root = Path(loc)
@@ -898,7 +976,6 @@ def main():
                                 display_summary_table(real_file_jobs, TITLE_FILE_SUFFIX_REMOVAL, COL_OLD, COL_NEW)
                                 for old, new in real_file_jobs:
                                     rename_folder(old, new, dry_run)
-
         # ----- FOLDER ORGANIZATION (per container) -----
         org_rules = compile_folder_org_rules(opts.get(KEY_FOLDER_ORG))
         if org_rules:
@@ -917,8 +994,6 @@ def main():
                         if rename_folder(old, new, dry_run):
                             # you can track a separate counter if you want
                             pass
-
-        
         # ----- REMOVE EMPTY FOLDERS (optional, per location) -----
         if remove_empty_folders:
             planned = create_delete_empty_dir_jobs(loc, *remove_empty_exceptions)
@@ -941,11 +1016,11 @@ def main():
                         log_message(f"NOTE: Removed folders will be compressed into: {zip_path}")
                 else:
                     if remove_folder_copies > 0:
-                        if remove_folder_copies > 0:
-                            total_old_removed_dirs_deleted += cleanup_old_removed_bucket_dirs(
-                                remove_dir, remove_subfolder, remove_folder_copies, loc, dry_run
-                            )
-
+                        total_old_removed_dirs_deleted += cleanup_old_removed_bucket_dirs(
+                            remove_dir, remove_subfolder, remove_folder_copies, loc, dry_run
+                        )
+        if not any_changes_loc:
+            log_message(f"No changes required for location: {loc}")
     # --- summary ---
     max_len = max(
         len(TITLE_FOLDER_REPLACEMENTS),
@@ -958,7 +1033,6 @@ def main():
         len(TITLE_REMOVE_OLD_ZIPS),
         len(TITLE_REMOVE_OLD_DIRS),
     )
-
     log_message("\nSummary Totals")
     log_message("==============")
     log_message(f"{TITLE_FOLDER_REPLACEMENTS.ljust(max_len)} : {total_folder_replacements}")
@@ -970,7 +1044,6 @@ def main():
     log_message(f"{TITLE_REMOVE_EMPTY.ljust(max_len)} : {total_removed_folders}")
     log_message(f"{TITLE_REMOVE_OLD_ZIPS.ljust(max_len)} : {total_old_removed_zips_deleted}")
     log_message(f"{TITLE_REMOVE_OLD_DIRS.ljust(max_len)} : {total_old_removed_dirs_deleted}")
-
     return 0
 
 # Run the program

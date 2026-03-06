@@ -1,91 +1,162 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""config_backup.py (template).
-
+"""
 config_backup.py
 
 Purpose
 -------
-Run structured, per-job configuration backups to compressed archives, typically
-during system shutdown (poweroff only).
+Run structured configuration backups to compressed archives based on jobs
+defined in a JSON configuration file.
 
-This script is designed to be executed:
-- Manually by an administrator, or
-- Automatically via a systemd oneshot service bound to poweroff.target
+This script is intended to run either:
+
+• Manually by an administrator  
+• Automatically via a systemd oneshot service attached to poweroff.target  
+
+Each configured job can back up a directory to a compressed archive while
+optionally stopping services, enforcing folder permissions, and applying
+retention rules.
 
 
 Key Features
 ------------
-- Multiple backup jobs defined in a single JSON config file
-- Supports tar.gz and zip archive formats
-- Optional service stop/start per job (e.g. plexmediaserver)
-- Automatic restart of stopped services unless a shutdown is in progress
-- Per-job retention policies (keep newest N backups)
-- Optional folder ownership/permission enforcement on backup destinations
-- Per-job backup frequency control (Immediately/Daily/Weekly/Monthly)
-- Manual runs always create a new backup regardless of frequency
-- Safe dry-run mode when executed under a non-production filename
-- Simple, append-only logging
+• Multiple backup jobs defined in one JSON config file  
+• Supports tar.gz and zip archive formats  
+• Optional systemd service stop/start per job (e.g. plexmediaserver)  
+• Automatic restart of services unless shutdown is in progress  
+• Per-job retention policies (keep newest N backups)  
+• Optional backup destination ownership and permission enforcement  
+• Per-job backup frequency control (Immediately / Daily / Weekly / Monthly)  
+• Manual execution always performs a backup regardless of frequency  
+• Safe dry-run mode for testing  
+• Simple timestamped logging
+
+
+Execution Safety
+----------------
+The script determines **live vs dry-run mode** using two checks:
+
+1) Explicit argument
+
+    --dry-run
+
+   This always forces dry-run mode and uses the template config located
+   next to the script.
+
+2) Script filename check
+
+   If the script filename is exactly:
+
+       config_backup.py
+
+   the script runs in **live mode** and uses:
+
+       /etc/config_backup_config.json
+
+   If executed under any other filename, the script automatically switches
+   to **dry-run mode** and uses:
+
+       config_backup_config-template.json
 
 
 Dry-Run Mode
 ------------
-If the script filename does NOT match the production script name
-(e.g. running a template or copied version), the script automatically
-runs in dry-run mode.
-
 In dry-run mode:
-- No files are created or deleted
-- No services are stopped or started
-- All actions are logged as "[DRY-RUN]" entries
 
-This allows safe testing and verification of configuration and logic
-without modifying the system.
+• No files are created or deleted  
+• No services are stopped or started  
+• No system configuration changes occur  
+• All actions are logged with "[DRY-RUN]" messages  
 
-Shutdown Safety
----------------
-When a job specifies a systemd service to stop:
-- The service is only stopped if it was running
-- The service is restarted after backup *unless* the system is shutting down
+This allows safe testing of configuration and logic.
 
-This prevents services from being restarted during poweroff, while still
-allowing safe manual execution.
 
-Frequency Safety
+Shutdown Behavior
+-----------------
+When the script runs during system shutdown:
+
+• Services configured in a job are stopped if currently running  
+• Backups are created  
+• Services are **NOT restarted** because the system is shutting down  
+
+When run manually:
+
+• Services are restarted after backup if they were stopped.
+
+
+Backup Frequency
 ----------------
-Jobs may define a 'backupFrequency' value:
-- Immediately, Daily, Weekly, Monthly (case-insensitive)
+Jobs may specify:
 
-When the script is shutdown-triggered, a job is skipped if its most recent
-existing archive is still within the configured frequency window.
+    backupFrequency
 
-When the script is run manually, frequency checks are bypassed and backups
-are always performed.
+Supported values (case-insensitive):
+
+• Immediately  
+• Daily  
+• Weekly  
+• Monthly  
+
+Behavior:
+
+Manual execution:
+    Frequency checks are ignored and backups always run.
+
+Shutdown execution:
+    A backup runs only if the newest existing archive is older than the
+    configured frequency window.
 
 
 Configuration
 -------------
-Configuration is loaded from JSON and must define a 'backup_jobs' object.
-Each job may specify:
-- source_dir
-- backup_root
-- keep
-- archive_prefix
-- format
-- backupFrequency
-- optional service stop/start behavior
-- optional folder protection (owner/group/permissions)
+Configuration is loaded from JSON and must define a top-level object:
+
+    "backup_jobs"
+
+Each job can specify:
+
+• source_dir          – directory to back up  
+• backup_root         – destination root folder  
+• keep                – number of archives to retain  
+• archive_prefix      – filename prefix for generated archives  
+• format              – archive format (tar.gz or zip)  
+• backupFrequency     – Immediately / Daily / Weekly / Monthly  
+
+Optional fields:
+
+• stop_service        – systemd service to stop before backup  
+• timeout_stop_sec    – seconds to wait for service to stop  
+• backupGroup         – group to ensure exists for backup access  
+• backupUsers         – users added to backup group  
+• protected_folder    – enforce owner/group/permissions on destination  
+
+Example job:
+
+{
+  "backup_jobs": {
+    "plex_config": {
+      "source_dir": "/var/lib/plexmediaserver",
+      "backup_root": "/mnt/backups",
+      "keep": 14,
+      "archive_prefix": "plex",
+      "format": "tar.gz",
+      "backupFrequency": "Daily",
+      "stop_service": "plexmediaserver"
+    }
+  }
+}
 
 
 Logging
 -------
-All actions are logged with timestamps to the configured log file.
-Logging is best-effort and never blocks execution.
+All operations log timestamped messages to stdout.
 
-NOTE:
-- Logging to the log file is handled by systemd via StandardOutput/StandardError.
-- This script prints to stdout only to avoid duplicate log lines.
+Logging to files is normally handled by systemd using:
 
+    StandardOutput
+    StandardError
+
+This avoids duplicate logging and keeps the script simple.
 """
 
 from __future__ import annotations
@@ -93,6 +164,9 @@ from __future__ import annotations
 import json
 import subprocess
 import zipfile
+import os
+import sys
+import argparse
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -109,6 +183,7 @@ BACKUP_WORD = "backup"
 TS_FMT = "%Y-%m-%d_%H-%M-%S"
 ARCHIVE_FORMATS = {"tar.gz", "zip"}
 FREQ_VALUES = {"immediately", "daily", "weekly", "monthly"}
+ARG_DESCRIPTION = "Run structured, per-job backups to compressed archives, typically during system shutdown (poweroff only)."
 
 
 # =====================
@@ -142,19 +217,6 @@ def log_message(message: str) -> None:
     print(f"{timestamp} : {message}", flush=True)
 
 
-def get_config_and_mode(
-    script_filename: str,
-    prod_script_name: str,
-    prod_config: str,
-    test_config_name: str,
-) -> tuple[Path, bool]:
-    """Return (config_path, dry_run) based on script name."""
-    if script_filename == prod_script_name:
-        return Path(prod_config), False
-    script_path = Path(__file__).resolve()
-    return script_path.with_name(test_config_name), True
-
-
 def load_json(path: Path) -> Dict[str, Any]:
     """Load JSON file as dict."""
     with path.open("r", encoding="utf-8") as f:
@@ -162,6 +224,17 @@ def load_json(path: Path) -> Dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"Config must be a JSON object: {path}")
     return data
+
+def parse_args(description: str):
+    parser = argparse.ArgumentParser(
+        description=description
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show actions without executing"
+    )
+    return parser.parse_args()
 
 
 # =====================
@@ -227,20 +300,16 @@ def ensure_backup_group(group: str, users: list[str], dry_run: bool) -> None:
             if proc.returncode != 0:
                 log_message(f"[WARN] groupadd {group} failed: {proc.stderr.strip()}")
                 return
-
     for user in sorted({u.strip() for u in users if isinstance(u, str) and u.strip()}):
         usr_check = subprocess.run(["id", "-nG", user], capture_output=True, text=True)
         if usr_check.returncode != 0:
             log_message(f"[WARN] User does not exist: {user}")
             continue
-
         if group in usr_check.stdout.split():
             continue
-
         if dry_run:
             log_message(f"[DRY-RUN] Would add user '{user}' to group '{group}'")
             continue
-
         log_message(f"Adding user '{user}' to group '{group}'")
         proc = subprocess.run(["usermod", "-aG", group, user], capture_output=True, text=True)
         if proc.returncode != 0:
@@ -408,14 +477,29 @@ def should_run_backup(*, frequency: str, latest_backup_time: Optional[datetime],
 # =====================
 def main() -> int:
     """Run backups for all jobs in config."""
-    # Resolve config + run mode
-    script_filename = Path(__file__).name
-    cfg_path, dry_run = get_config_and_mode(
-        script_filename,
-        SCRIPT_NAME,
-        PROD_CONFIG,
-        TEST_CONFIG_NAME,
-    )
+    # Decide config + dry-run based on script filename or arguments
+    args = parse_args(ARG_DESCRIPTION)
+    script_basename = os.path.basename(sys.argv[0])
+
+    if args.dry_run:
+        cfg_path = Path(__file__).resolve().with_name(TEST_CONFIG_NAME)
+        dry_run = True
+        log_message(
+            f"Argument '--dry-run' detected — "
+            f"running in DRY-RUN with test config '{cfg_path}'."
+        )
+    elif script_basename == SCRIPT_NAME:
+        cfg_path = Path(PROD_CONFIG)
+        dry_run = False
+    else:
+        cfg_path = Path(__file__).resolve().with_name(TEST_CONFIG_NAME)
+        dry_run = True
+        log_message(
+            f"Script name '{script_basename}' != '{SCRIPT_NAME}' — "
+            f"running in DRY-RUN with test config '{cfg_path}'."
+        )
+    log_message(f"Using config: {cfg_path}")
+    log_message(f"Dry run: {dry_run}")
 
     log_message(f"config_backup starting (dry_run={dry_run})")
     log_message(f"Config: {cfg_path}")
@@ -455,28 +539,22 @@ def main() -> int:
             src = spec.get("source_dir")
             root = spec.get("backup_root")
             keep = spec.get("keep", 14)
-
             if not isinstance(src, str) or not src.strip():
                 raise ValueError(f"Job '{key}' missing/invalid 'source_dir'.")
             if not isinstance(root, str) or not root.strip():
                 raise ValueError(f"Job '{key}' missing/invalid 'backup_root'.")
             if not isinstance(keep, int):
                 raise ValueError(f"Job '{key}' has non-integer 'keep'.")
-
             fmt = spec.get("format", "tar.gz")
             if fmt not in ARCHIVE_FORMATS:
                 raise ValueError(
                     f"Job '{key}' unsupported format '{fmt}'. Supported: {sorted(ARCHIVE_FORMATS)}"
                 )
-
             archive_prefix = str(spec.get("archive_prefix", "config"))
-
             stop_service_raw = spec.get("stop_service")
             stop_service = stop_service_raw.strip() if isinstance(stop_service_raw, str) else None
             stop_service = stop_service if stop_service else None
-
             timeout_stop_sec = int(spec.get("timeout_stop_sec", 30))
-
             # Backup frequency (case-insensitive)
             freq_raw = spec.get("backupFrequency", "Immediately")
             freq = freq_raw.strip().lower() if isinstance(freq_raw, str) else "immediately"
@@ -485,17 +563,14 @@ def main() -> int:
                     f"Job '{key}' has invalid backupFrequency '{freq_raw}'. "
                     f"Allowed: {sorted(FREQ_VALUES)}"
                 )
-
             # Backup groups and users
             backup_group_raw = spec.get("backupGroup")
             backup_group = backup_group_raw.strip() if isinstance(backup_group_raw, str) else None
             backup_group = backup_group if backup_group else None
-
             backup_users_raw = spec.get("backupUsers", [])
             backup_users: List[str] = []
             if isinstance(backup_users_raw, list):
                 backup_users = [u.strip() for u in backup_users_raw if isinstance(u, str) and u.strip()]
-
             # File protection
             protected = spec.get("protected_folder", {})
             protect_owner = None
@@ -508,7 +583,6 @@ def main() -> int:
                 protect_owner = o if isinstance(o, str) and o.strip() else None
                 protect_group = g if isinstance(g, str) and g.strip() else None
                 protect_perms = p if isinstance(p, str) and p.strip() else None
-
             jobs.append(
                 Job(
                     key=key,
@@ -530,20 +604,16 @@ def main() -> int:
     except Exception as e:
         log_message(f"[ERROR] Failed to parse jobs: {e!r}")
         return 2
-
     # Execute backup jobs
     processed = 0
     for job in jobs:
         try:
             log_message(f"==> Job '{job.key}'")
             log_message(f"Source: {job.source_dir}")
-
             dest_folder = job.backup_root / job.key
-
             # Ensure backup group + membership (even if backup is skipped)
             if job.backup_group:
                 ensure_backup_group(job.backup_group, job.backup_users, dry_run)
-
             # Always apply folder protection when configured (even if backup is skipped)
             if (not dry_run) and job.protect_owner and job.protect_group and job.protect_perms:
                 apply_folder_protection(
@@ -563,16 +633,13 @@ def main() -> int:
                 else:
                     log_message(f"[WARN] stat failed on {dest_folder}: {st.stderr.strip()}")
             log_message(f"Dest:   {dest_folder}")
-
             # Frequency check:
             # - Manual trigger: ALWAYS run backup regardless of frequency
             # - Shutdown trigger: run only if frequency says it's due
             now = datetime.now()
             manual_trigger = not is_shutdown_trigger
-
             archive_prefix_full = f"{job.key}_{job.archive_prefix}_{BACKUP_WORD}"
             latest = get_latest_archive_mtime(dest_folder, archive_prefix_full, job.fmt)
-
             if not should_run_backup(
                 frequency=job.backup_frequency,
                 latest_backup_time=latest,
@@ -584,9 +651,7 @@ def main() -> int:
                     f"Latest backup: {latest.strftime('%Y-%m-%d %H:%M:%S') if latest else 'None'}"
                 )
                 continue
-
             was_active = False
-
             # Optional stop service (only if it was running)
             if job.stop_service:
                 was_active = systemctl_is_active(job.stop_service)
@@ -594,22 +659,18 @@ def main() -> int:
                     systemctl_stop(job.stop_service, job.timeout_stop_sec, dry_run)
                 else:
                     log_message(f"Service already inactive: {job.stop_service}")
-
             # Validate source exists
             if not job.source_dir.exists():
                 log_message(f"[ERROR] Source does not exist: {job.source_dir}")
                 continue
-
             # Create archive (atomic .tmp then rename)
             ts = now.strftime(TS_FMT)
             archive_name = f"{job.key}_{job.archive_prefix}_{BACKUP_WORD}_{ts}.{job.fmt}"
             archive_path = dest_folder / archive_name
-
             if job.fmt == "zip":
                 ok = zip_directory(job.source_dir, archive_path, dry_run)
             else:
                 ok = tar_directory(job.source_dir, archive_path, dry_run)
-
             if ok:
                 log_message(f"[OK] Created archive: {archive_path}")
 
@@ -624,7 +685,6 @@ def main() -> int:
                 processed += 1
             else:
                 log_message("[FAIL] Archive creation failed.")
-
             # Restart service only if:
             # - job requested stop/start AND it was active when we started
             # - NOT during shutdown
@@ -633,13 +693,11 @@ def main() -> int:
                     log_message(f"Shutdown in progress; not restarting service: {job.stop_service}")
                 else:
                     systemctl_start(job.stop_service, dry_run)
-
         except KeyboardInterrupt:
             log_message("Interrupted by user.")
             return 130
         except Exception as e:
             log_message(f"[ERROR] Job '{job.key}' failed: {e!r}")
-
     # Final summary
     log_message(f"DONE: {processed}/{len(jobs)} job(s) processed.")
     return 0

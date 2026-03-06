@@ -8,10 +8,10 @@ These services are designed to run during **startup or shutdown** and perform ta
 * Organizing media libraries
 * Updating file permissions
 * Refreshing Plex metadata
-* Creating configuration backups
-* Running rsync-based backups
+* Creating configuration backups'
+* Running rsync-based backups'
 
-The repository provides **generic templates**.
+The repository provides generic templates.
 You must adjust paths and users to match your system before use.
 
 ---
@@ -74,6 +74,29 @@ Enable the service:
 ```bash
 sudo systemctl enable service-name.service
 ```
+
+---
+
+# Dry-Run Mode
+
+All Python scripts support a **dry-run mode** for safe testing.
+
+Dry-run mode logs the actions the script *would* perform without making any system changes.
+
+You can enable dry-run in two ways:
+
+### 1. Command-line argument
+
+python3 script-name.py --dry-run
+
+### 2. Using the template script name
+
+Template scripts automatically run in dry-run mode if the script name does not match the production name.
+
+Example:
+
+plex_refresh-template.py   → dry-run mode
+plex_refresh.py            → live execution
 
 ---
 
