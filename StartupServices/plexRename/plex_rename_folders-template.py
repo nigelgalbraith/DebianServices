@@ -152,8 +152,8 @@ from functools import lru_cache
 # =====================
 # CONSTANTS
 # =====================
-CONFIG_FILE_TEST = "plex_rename_folders_config-template.json"
-CONFIG_FILE = "/etc/plex_rename_folders_config.json"
+CONFIG_TEST = "plex_rename_folders_config-template.json"
+CONFIG_PROD = "/etc/plex_rename_folders_config.json"
 SCRIPT_NAME = "plex_rename_folders.py"
 ARG_DESCRIPTION = "Normalize Plex media folder and file names based on config."
 
@@ -849,33 +849,27 @@ def main():
     # Decide config + dry-run based on script filename or arguments
     args = parse_args(ARG_DESCRIPTION)
     script_basename = os.path.basename(sys.argv[0])
-    if args.dry_run:
-        active_config = str(Path(__file__).resolve().parent / CONFIG_FILE_TEST)
-        dry_run = True
-        log_message(
-            f"Argument '--dry-run' detected — "
-            f"running in DRY-RUN with test config '{active_config}'."
-        )
-        log_message(f"Using config: {active_config}")
-        log_message(f"Dry run: {dry_run}\n")
-    elif script_basename == SCRIPT_NAME:
-        active_config = CONFIG_FILE
-        dry_run = False
-        log_message(f"Using config: {active_config}")
-        log_message(f"Dry run: {dry_run}\n")
+    if script_basename == SCRIPT_NAME:
+        cfg_path = Path(CONFIG_PROD)
+        dry_run = args.dry_run
+        if dry_run:
+            log_message(
+                f"Argument '--dry-run' detected — "
+                f"running in DRY-RUN with production config '{cfg_path}'."
+            )
     else:
-        active_config = str(Path(__file__).resolve().parent / CONFIG_FILE_TEST)
+        cfg_path = Path(__file__).resolve().parent / CONFIG_TEST
         dry_run = True
         log_message(
             f"Script name '{script_basename}' != '{SCRIPT_NAME}' — "
-            f"running in DRY-RUN with test config '{active_config}'."
+            f"running in DRY-RUN with test config '{cfg_path}'."
         )
-        log_message(f"Using config: {active_config}")
-        log_message(f"Dry run: {dry_run}\n")
+    log_message(f"Using config: {cfg_path}")
+    log_message(f"Dry run: {dry_run}")
     # set prefix value
     prefix = "[DRY-RUN] " if dry_run else ""
     try:
-        cfg = load_config(active_config)
+        cfg = load_config(cfg_path)
     except Exception as e:
         log_message(f"Failed to load config: {e}")
         return 1

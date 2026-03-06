@@ -107,8 +107,8 @@ from typing import Dict, Any, Optional, List
 # CONSTANTS
 # =====================
 SCRIPT_NAME = "rsync_backup.py"
-PROD_CONFIG = "/etc/rsync_backup_config.json"
-TEST_CONFIG_NAME = "rsync_backup_config-template.json"
+CONFIG_PROD = "/etc/rsync_backup_config.json"
+CONFIG_TEST = "rsync_backup_config-template.json"
 BACKUP_WORD = "backup"
 TS_FMT = "%Y-%m-%d_%H-%M-%S"
 FREQ_VALUES = {"immediately", "daily", "weekly", "monthly"}
@@ -366,27 +366,23 @@ def main() -> int:
     # Decide config + dry-run based on script filename or arguments
     args = parse_args(ARG_DESCRIPTION)
     script_basename = os.path.basename(sys.argv[0])
-    if args.dry_run:
-        cfg_path = Path(__file__).resolve().with_name(TEST_CONFIG_NAME)
-        dry_run = True
-        log_message(
-            f"Argument '--dry-run' detected — "
-            f"running in DRY-RUN with test config '{cfg_path}'."
-        )
-    elif script_basename == SCRIPT_NAME:
-        cfg_path = Path(PROD_CONFIG)
-        dry_run = False
+    if script_basename == SCRIPT_NAME:
+        cfg_path = Path(CONFIG_PROD)
+        dry_run = args.dry_run
+        if dry_run:
+            log_message(
+                f"Argument '--dry-run' detected — "
+                f"running in DRY-RUN with production config '{cfg_path}'."
+            )
     else:
-        cfg_path = Path(__file__).resolve().with_name(TEST_CONFIG_NAME)
+        cfg_path = Path(__file__).resolve().parent / CONFIG_TEST
         dry_run = True
         log_message(
             f"Script name '{script_basename}' != '{SCRIPT_NAME}' — "
             f"running in DRY-RUN with test config '{cfg_path}'."
         )
-
     log_message(f"Using config: {cfg_path}")
     log_message(f"Dry run: {dry_run}")
-
     log_message(f"rsync_backup starting (dry_run={dry_run})")
     log_message(f"Config: {cfg_path}")
     log_message(

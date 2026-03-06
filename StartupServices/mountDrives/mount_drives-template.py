@@ -103,8 +103,9 @@ import subprocess
 import pwd
 import argparse
 from datetime import datetime
+from pathlib import Path
 
-CONFIG_FILE = "/etc/mount_drives_config.json"
+CONFIG_PROD = "/etc/mount_drives_config.json"
 CONFIG_TEST = "mount_drives_config-template.json"
 SCRIPT_NAME = "mount_drives.py"
 ARG_DESCRIPTION = "Mount filesystem devices by label at system startup, with optional dry-run mode."
@@ -241,33 +242,32 @@ def main():
     # Decide config + dry-run based on script filename or arguments
     args = parse_args(ARG_DESCRIPTION)
     script_basename = os.path.basename(sys.argv[0])
-    if args.dry_run:
-        cfg_dir = os.path.dirname(os.path.realpath(__file__))
-        config_path = os.path.join(cfg_dir, CONFIG_TEST)
-        dry_run = True
-        log_message(f"Argument '--dry-run' detected — running in DRY-RUN with test config '{config_path}'.")
-    elif script_basename == SCRIPT_NAME:
-        config_path = CONFIG_FILE
-        dry_run = False
+    if script_basename == SCRIPT_NAME:
+        cfg_path = Path(CONFIG_PROD)
+        dry_run = args.dry_run
+        if dry_run:
+            log_message(
+                f"Argument '--dry-run' detected — "
+                f"running in DRY-RUN with production config '{cfg_path}'."
+            )
     else:
-        cfg_dir = os.path.dirname(os.path.realpath(__file__))
-        config_path = os.path.join(cfg_dir, CONFIG_TEST)
+        cfg_path = Path(__file__).resolve().parent / CONFIG_TEST
         dry_run = True
         log_message(
             f"Script name '{script_basename}' != '{SCRIPT_NAME}' — "
-            f"running in DRY-RUN with test config '{config_path}'."
+            f"running in DRY-RUN with test config '{cfg_path}'."
         )
-    log_message(f"Using config: {config_path}")
+    log_message(f"Using config: {cfg_path}")
     log_message(f"Dry run: {dry_run}")
     # Load configuration
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(cfg_path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
     except FileNotFoundError:
-        log_message(f"ERROR: config file '{config_path}' not found.")
+        log_message(f"ERROR: config file '{cfg_path}' not found.")
         sys.exit(1)
     except json.JSONDecodeError as e:
-        log_message(f"ERROR: bad JSON in '{config_path}': {e}")
+        log_message(f"ERROR: bad JSON in '{cfg_path}': {e}")
         sys.exit(1)
     mount_opts = cfg.get("MOUNT_OPTS", "defaults")
     drives = cfg.get("DRIVES", {})

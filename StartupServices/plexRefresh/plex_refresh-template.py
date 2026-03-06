@@ -130,9 +130,10 @@ import subprocess
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from datetime import datetime
 
-CONFIG_FILE = "/etc/plex_refresh_config.json"
+CONFIG_PROD = "/etc/plex_refresh_config.json"
 CONFIG_TEST = "plex_refresh_config-template.json"
 SCRIPT_NAME = "plex_refresh.py"
 ARG_DESCRIPTION = "Refresh Plex libraries by section, with optional dry-run mode."
@@ -271,33 +272,31 @@ def main() -> int:
     # Decide config + dry-run based on script filename or arguments
     args = parse_args(ARG_DESCRIPTION)
     script_basename = os.path.basename(sys.argv[0])
-    if args.dry_run:
-        cfg_dir = os.path.dirname(os.path.realpath(__file__))
-        config_path = os.path.join(cfg_dir, CONFIG_TEST)
-        dry_run = True
-        log_message(
-            f"Argument '--dry-run' detected — "
-            f"running in DRY-RUN with test config '{config_path}'."
-        )
-    elif script_basename == SCRIPT_NAME:
-        config_path = CONFIG_FILE
-        dry_run = False
+    if script_basename == SCRIPT_NAME:
+        cfg_path = Path(CONFIG_PROD)
+        dry_run = args.dry_run
+        if dry_run:
+            log_message(
+                f"Argument '--dry-run' detected — "
+                f"running in DRY-RUN with production config '{cfg_path}'."
+            )
     else:
-        cfg_dir = os.path.dirname(os.path.realpath(__file__))
-        config_path = os.path.join(cfg_dir, CONFIG_TEST)
+        cfg_path = Path(__file__).resolve().parent / CONFIG_TEST
         dry_run = True
         log_message(
             f"Script name '{script_basename}' != '{SCRIPT_NAME}' — "
-            f"running in DRY-RUN with test config '{config_path}'."
+            f"running in DRY-RUN with test config '{cfg_path}'."
         )
+    log_message(f"Using config: {cfg_path}")
+    log_message(f"Dry run: {dry_run}")
     # Load config
     try:
-        cfg = load_config(config_path)
+        cfg = load_config(cfg_path)
     except FileNotFoundError:
-        log_message(f"ERROR: config file '{config_path}' not found.")
+        log_message(f"ERROR: config file '{cfg_path}' not found.")
         return 1
     except json.JSONDecodeError as e:
-        log_message(f"ERROR: bad JSON in '{config_path}': {e}")
+        log_message(f"ERROR: bad JSON in '{cfg_path}': {e}")
         return 1
     # Config fields
     server = cfg.get("PLEX_SERVER", {})
